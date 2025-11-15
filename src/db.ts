@@ -84,5 +84,30 @@ export const getAllContacts = async (): Promise<Contact[]> => {
   }
 };
 
+export const insertContact = async (
+  name: string,
+  phone?: string | null,
+  email?: string | null
+): Promise<number> => {
+  try {
+    const database = getDatabase();
+    const now = Date.now();
+    
+    const statement = await database.prepareAsync(
+      'INSERT INTO contacts (name, phone, email, favorite, created_at) VALUES (?, ?, ?, 0, ?)'
+    );
+    
+    try {
+      const result = await statement.executeAsync([name, phone || null, email || null, now]);
+      return result.lastInsertRowId;
+    } finally {
+      await statement.finalizeAsync();
+    }
+  } catch (error) {
+    console.error('Error inserting contact:', error);
+    throw error;
+  }
+};
+
 export default db;
 
