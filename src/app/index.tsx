@@ -28,7 +28,6 @@ export default function Page() {
     <View style={[styles.container, { paddingTop: top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Simple Contacts</Text>
-        <Text style={styles.subtitle}>Test Câu 2 - Danh sách contacts</Text>
       </View>
 
       {loading ? (
@@ -47,17 +46,13 @@ export default function Page() {
                 {item.favorite === 1 && <Text style={styles.favoriteIcon}>⭐</Text>}
               </View>
               {item.phone && (
-                <Text style={styles.contactPhone}>📞 {item.phone}</Text>
+                <Text style={styles.contactPhone}>{item.phone}</Text>
               )}
-              {item.email && (
-                <Text style={styles.contactEmail}>✉️ {item.email}</Text>
-              )}
-              <Text style={styles.contactId}>ID: {item.id}</Text>
             </View>
           )}
           ListEmptyComponent={
             <View style={styles.centerContainer}>
-              <Text style={styles.emptyText}>Chưa có contact nào</Text>
+              <Text style={styles.emptyText}>Chưa có liên hệ nào.</Text>
             </View>
           }
           contentContainerStyle={contacts.length === 0 ? styles.emptyList : styles.list}
@@ -83,11 +78,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#1F2937',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6B7280',
   },
   centerContainer: {
     flex: 1,
@@ -137,17 +127,6 @@ const styles = StyleSheet.create({
   contactPhone: {
     fontSize: 15,
     color: '#374151',
-    marginBottom: 4,
-  },
-  contactEmail: {
-    fontSize: 15,
-    color: '#374151',
-    marginBottom: 4,
-  },
-  contactId: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    marginTop: 8,
   },
   emptyText: {
     fontSize: 16,
