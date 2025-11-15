@@ -29,6 +29,11 @@ const seedSampleData = async (database: SQLite.SQLiteDatabase): Promise<void> =>
 };
 
 export const initDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
+  // Nếu database đã được khởi tạo, trả về ngay
+  if (db) {
+    return db;
+  }
+  
   try {
     db = await SQLite.openDatabaseAsync('simple_contacts.db');
     
@@ -105,6 +110,49 @@ export const insertContact = async (
     }
   } catch (error) {
     console.error('Error inserting contact:', error);
+    throw error;
+  }
+};
+
+// Cập nhật favorite của contact (toggle 0 ↔ 1)
+export const updateContactFavorite = async (id: number, favorite: number): Promise<void> => {
+  try {
+    const database = getDatabase();
+    const statement = await database.prepareAsync(
+      'UPDATE contacts SET favorite = ? WHERE id = ?'
+    );
+    
+    try {
+      await statement.executeAsync([favorite, id]);
+    } finally {
+      await statement.finalizeAsync();
+    }
+  } catch (error) {
+    console.error('Error updating contact favorite:', error);
+    throw error;
+  }
+};
+
+// Cập nhật thông tin contact (name, phone, email)
+export const updateContact = async (
+  id: number,
+  name: string,
+  phone?: string | null,
+  email?: string | null
+): Promise<void> => {
+  try {
+    const database = getDatabase();
+    const statement = await database.prepareAsync(
+      'UPDATE contacts SET name = ?, phone = ?, email = ? WHERE id = ?'
+    );
+    
+    try {
+      await statement.executeAsync([name, phone || null, email || null, id]);
+    } finally {
+      await statement.finalizeAsync();
+    }
+  } catch (error) {
+    console.error('Error updating contact:', error);
     throw error;
   }
 };
