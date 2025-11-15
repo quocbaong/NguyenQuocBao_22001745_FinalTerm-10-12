@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Text, View, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Modal, TextInput, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getAllContacts, insertContact, updateContact, updateContactFavorite, deleteContact, initDatabase, Contact } from "../db";
@@ -52,6 +52,8 @@ const EditContactModal = ({
     }
 
     try {
+      // Đảm bảo database đã được khởi tạo
+      await initDatabase();
       // ✅ UPDATE vào SQLite
       await updateContact(
         contact.id,
@@ -197,6 +199,8 @@ const AddContactModal = ({
     }
 
     try {
+      // Đảm bảo database đã được khởi tạo
+      await initDatabase();
       await insertContact(name.trim(), phone.trim() || null, email.trim() || null);
       // Reset form
       setName('');
@@ -302,6 +306,9 @@ export default function Page() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  // ✅ State cho tìm kiếm và filter
+  const [searchText, setSearchText] = useState('');
+  const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const { top } = useSafeAreaInsets();
 
   useEffect(() => {
@@ -321,18 +328,42 @@ export default function Page() {
     initializeAndLoad();
   }, []);
 
-  const loadContacts = async () => {
+  const loadContacts = useCallback(async () => {
     try {
       const data = await getAllContacts();
       setContacts(data);
     } catch (error) {
       console.error('Error loading contacts:', error);
     }
-  };
+  }, []);
 
-  // ✅ Toggle favorite: cập nhật favorite trong SQLite
-  const handleToggleFavorite = async (contact: Contact) => {
+  // ✅ Tối ưu bằng useMemo để filter contacts theo searchText và favorite
+  const filteredContacts = useMemo(() => {
+    let result = contacts;
+
+    // ✅ Filter chỉ hiển thị các contact favorite (nếu bật)
+    if (showFavoriteOnly) {
+      result = result.filter(contact => contact.favorite === 1);
+    }
+
+    // ✅ Tìm kiếm theo name hoặc phone
+    if (searchText.trim()) {
+      const searchLower = searchText.toLowerCase().trim();
+      result = result.filter(contact => {
+        const nameMatch = contact.name.toLowerCase().includes(searchLower);
+        const phoneMatch = contact.phone?.toLowerCase().includes(searchLower) || false;
+        return nameMatch || phoneMatch;
+      });
+    }
+
+    return result;
+  }, [contacts, searchText, showFavoriteOnly]);
+
+  // ✅ Tối ưu bằng useCallback
+  const handleToggleFavorite = useCallback(async (contact: Contact) => {
     try {
+      // Đảm bảo database đã được khởi tạo
+      await initDatabase();
       const newFavorite = contact.favorite === 1 ? 0 : 1;
       await updateContactFavorite(contact.id, newFavorite);
       await loadContacts();
@@ -340,16 +371,16 @@ export default function Page() {
       console.error('Error toggling favorite:', error);
       Alert.alert('Lỗi', 'Không thể cập nhật yêu thích. Vui lòng thử lại.');
     }
-  };
+  }, [loadContacts]);
 
   // ✅ Mở modal sửa contact
-  const handleEditContact = (contact: Contact) => {
+  const handleEditContact = useCallback((contact: Contact) => {
     setSelectedContact(contact);
     setEditModalVisible(true);
-  };
+  }, []);
 
   // ✅ Xóa contact với xác nhận
-  const handleDeleteContact = (contact: Contact) => {
+  const handleDeleteContact = useCallback((contact: Contact) => {
     // ✅ Hiện Alert xác nhận trước khi xóa
     Alert.alert(
       'Xác nhận xóa',
@@ -364,6 +395,8 @@ export default function Page() {
           style: 'destructive',
           onPress: async () => {
             try {
+              // Đảm bảo database đã được khởi tạo
+              await initDatabase();
               // ✅ DELETE khỏi SQLite nếu người dùng đồng ý
               await deleteContact(contact.id);
               // Refresh danh sách sau khi xóa
@@ -376,7 +409,7 @@ export default function Page() {
         },
       ]
     );
-  };
+  }, [loadContacts]);
 
   return (
     <View style={[styles.container, { paddingTop: top }]}>
@@ -391,6 +424,26 @@ export default function Page() {
         </TouchableOpacity>
       </View>
 
+      {/* ✅ TextInput Search để tìm kiếm theo name hoặc phone */}
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Tìm kiếm theo tên hoặc số điện thoại..."
+          value={searchText}
+          onChangeText={setSearchText}
+          autoCapitalize="none"
+        />
+        {/* ✅ Filter chỉ hiển thị các contact favorite (tùy chọn) */}
+        <TouchableOpacity
+          style={[styles.filterButton, showFavoriteOnly && styles.filterButtonActive]}
+          onPress={() => setShowFavoriteOnly(!showFavoriteOnly)}
+        >
+          <Text style={[styles.filterButtonText, showFavoriteOnly && styles.filterButtonTextActive]}>
+            ⭐
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color="#3B82F6" />
@@ -398,7 +451,7 @@ export default function Page() {
         </View>
       ) : (
         <FlatList
-          data={contacts}
+          data={filteredContacts}
           keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) => (
             <TouchableOpacity
@@ -444,10 +497,14 @@ export default function Page() {
           )}
           ListEmptyComponent={
             <View style={styles.centerContainer}>
-              <Text style={styles.emptyText}>Chưa có liên hệ nào.</Text>
+              <Text style={styles.emptyText}>
+                {searchText || showFavoriteOnly 
+                  ? 'Không tìm thấy liên hệ nào.' 
+                  : 'Chưa có liên hệ nào.'}
+              </Text>
             </View>
           }
-          contentContainerStyle={contacts.length === 0 ? styles.emptyList : styles.list}
+          contentContainerStyle={filteredContacts.length === 0 ? styles.emptyList : styles.list}
         />
       )}
 
@@ -491,6 +548,47 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#1F2937',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    height: 40,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    backgroundColor: '#F9FAFB',
+    color: '#1F2937',
+  },
+  filterButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  filterButtonActive: {
+    backgroundColor: '#FBBF24',
+    borderColor: '#FBBF24',
+  },
+  filterButtonText: {
+    fontSize: 20,
+  },
+  filterButtonTextActive: {
+    color: '#fff',
   },
   addButton: {
     width: 40,
