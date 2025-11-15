@@ -1,7 +1,163 @@
 import React, { useState, useEffect } from "react";
 import { Text, View, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Modal, TextInput, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getAllContacts, insertContact, Contact } from "../db";
+import { getAllContacts, insertContact, updateContact, updateContactFavorite, initDatabase, Contact } from "../db";
+
+// Modal component để chỉnh sửa contact
+const EditContactModal = ({ 
+  visible, 
+  onClose, 
+  onSuccess,
+  contact
+}: { 
+  visible: boolean; 
+  onClose: () => void; 
+  onSuccess: () => void;
+  contact: Contact | null;
+}) => {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [errors, setErrors] = useState<{ name?: string; email?: string }>({});
+
+  // Điền dữ liệu contact khi modal mở
+  useEffect(() => {
+    if (contact) {
+      setName(contact.name || '');
+      setPhone(contact.phone || '');
+      setEmail(contact.email || '');
+    }
+  }, [contact]);
+
+  const validate = (): boolean => {
+    const newErrors: { name?: string; email?: string } = {};
+    
+    // ✅ Validate: name không rỗng
+    if (!name.trim()) {
+      newErrors.name = 'Tên không được để trống';
+    }
+    
+    // ✅ Validate: email có chứa ký tự @ nếu không rỗng
+    if (email.trim() && !email.includes('@')) {
+      newErrors.email = 'Email phải chứa ký tự @';
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSave = async () => {
+    if (!validate() || !contact) {
+      return;
+    }
+
+    try {
+      // ✅ UPDATE vào SQLite
+      await updateContact(
+        contact.id,
+        name.trim(),
+        phone.trim() || null,
+        email.trim() || null
+      );
+      // Reset form
+      setName('');
+      setPhone('');
+      setEmail('');
+      setErrors({});
+      onClose();
+      onSuccess();
+    } catch (error) {
+      console.error('Error updating contact:', error);
+      Alert.alert('Lỗi', 'Không thể cập nhật liên hệ. Vui lòng thử lại.');
+    }
+  };
+
+  const handleClose = () => {
+    setName('');
+    setPhone('');
+    setEmail('');
+    setErrors({});
+    onClose();
+  };
+
+  if (!contact) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={handleClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Sửa liên hệ</Text>
+            <TouchableOpacity onPress={handleClose}>
+              <Text style={styles.modalCloseButton}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.form}>
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Tên *</Text>
+              <TextInput
+                style={[styles.input, errors.name && styles.inputError]}
+                placeholder="Nhập tên"
+                value={name}
+                onChangeText={(text) => {
+                  setName(text);
+                  if (errors.name) {
+                    setErrors({ ...errors, name: undefined });
+                  }
+                }}
+              />
+              {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Số điện thoại</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Nhập số điện thoại (tùy chọn)"
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+              />
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Email</Text>
+              <TextInput
+                style={[styles.input, errors.email && styles.inputError]}
+                placeholder="Nhập email (tùy chọn)"
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  if (errors.email) {
+                    setErrors({ ...errors, email: undefined });
+                  }
+                }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.cancelButton} onPress={handleClose}>
+                <Text style={styles.cancelButtonText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+                <Text style={styles.saveButtonText}>Lưu</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
 
 // Modal component để thêm contact mới
 const AddContactModal = ({ 
@@ -144,22 +300,52 @@ export default function Page() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const { top } = useSafeAreaInsets();
 
   useEffect(() => {
-    loadContacts();
+    const initializeAndLoad = async () => {
+      try {
+        setLoading(true);
+        // Đảm bảo database đã được khởi tạo trước khi load contacts
+        await initDatabase();
+        await loadContacts();
+      } catch (error) {
+        console.error('Error initializing database:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    initializeAndLoad();
   }, []);
 
   const loadContacts = async () => {
     try {
-      setLoading(true);
       const data = await getAllContacts();
       setContacts(data);
     } catch (error) {
       console.error('Error loading contacts:', error);
-    } finally {
-      setLoading(false);
     }
+  };
+
+  // ✅ Toggle favorite: cập nhật favorite trong SQLite
+  const handleToggleFavorite = async (contact: Contact) => {
+    try {
+      const newFavorite = contact.favorite === 1 ? 0 : 1;
+      await updateContactFavorite(contact.id, newFavorite);
+      await loadContacts();
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
+      Alert.alert('Lỗi', 'Không thể cập nhật yêu thích. Vui lòng thử lại.');
+    }
+  };
+
+  // ✅ Mở modal sửa contact
+  const handleEditContact = (contact: Contact) => {
+    setSelectedContact(contact);
+    setEditModalVisible(true);
   };
 
   return (
@@ -185,15 +371,37 @@ export default function Page() {
           data={contacts}
           keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) => (
-            <View style={styles.contactItem}>
+            <TouchableOpacity
+              style={styles.contactItem}
+              onLongPress={() => handleEditContact(item)}
+              activeOpacity={0.7}
+            >
               <View style={styles.contactHeader}>
                 <Text style={styles.contactName}>{item.name}</Text>
-                {item.favorite === 1 && <Text style={styles.favoriteIcon}>⭐</Text>}
+                {/* ✅ Icon sao để toggle favorite (0 ↔ 1) */}
+                <TouchableOpacity 
+                  onPress={() => handleToggleFavorite(item)}
+                  style={styles.favoriteButton}
+                >
+                  <Text style={styles.favoriteIcon}>
+                    {item.favorite === 1 ? '★' : '☆'}
+                  </Text>
+                </TouchableOpacity>
               </View>
               {item.phone && (
                 <Text style={styles.contactPhone}>{item.phone}</Text>
               )}
-            </View>
+              {item.email && (
+                <Text style={styles.contactEmail}>{item.email}</Text>
+              )}
+              {/* ✅ Nút "Sửa" để mở Modal chỉnh sửa */}
+              <TouchableOpacity 
+                style={styles.editButton}
+                onPress={() => handleEditContact(item)}
+              >
+                <Text style={styles.editButtonText}>Sửa</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
           )}
           ListEmptyComponent={
             <View style={styles.centerContainer}>
@@ -209,6 +417,17 @@ export default function Page() {
         visible={modalVisible}
         onClose={() => setModalVisible(false)}
         onSuccess={loadContacts}
+      />
+
+      {/* ✅ Modal sửa contact */}
+      <EditContactModal
+        visible={editModalVisible}
+        onClose={() => {
+          setEditModalVisible(false);
+          setSelectedContact(null);
+        }}
+        onSuccess={loadContacts}
+        contact={selectedContact}
       />
     </View>
   );
@@ -294,12 +513,35 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     flex: 1,
   },
+  favoriteButton: {
+    padding: 4,
+  },
   favoriteIcon: {
-    fontSize: 20,
+    fontSize: 32,
+    color: '#FBBF24',
   },
   contactPhone: {
     fontSize: 15,
     color: '#374151',
+    marginBottom: 4,
+  },
+  contactEmail: {
+    fontSize: 15,
+    color: '#374151',
+    marginBottom: 8,
+  },
+  editButton: {
+    alignSelf: 'flex-end',
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#3B82F6',
+    borderRadius: 6,
+  },
+  editButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   emptyText: {
     fontSize: 16,
