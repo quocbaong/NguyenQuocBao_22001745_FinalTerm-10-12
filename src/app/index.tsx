@@ -309,6 +309,8 @@ export default function Page() {
   // ✅ State cho tìm kiếm và filter
   const [searchText, setSearchText] = useState('');
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
+  // ✅ State cho import API
+  const [importing, setImporting] = useState(false);
   const { top } = useSafeAreaInsets();
 
   useEffect(() => {
@@ -379,6 +381,88 @@ export default function Page() {
     setEditModalVisible(true);
   }, []);
 
+  // ✅ Import contacts từ API
+  const handleImportFromAPI = useCallback(async () => {
+    try {
+      setImporting(true);
+      
+      // Đảm bảo database đã được khởi tạo trước khi làm bất cứ gì
+      await initDatabase();
+      
+      // ✅ Gọi GET tới endpoint danh sách contact mẫu
+      const response = await fetch('https://691845db21a96359486f8565.mockapi.io/contacts');
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const apiContacts = await response.json();
+      
+      // Đảm bảo database vẫn còn kết nối trước khi query
+      await initDatabase();
+      
+      // Lấy danh sách contacts hiện có để kiểm tra trùng lặp
+      const existingContacts = await getAllContacts();
+      const existingPhones = new Set(
+        existingContacts
+          .map(c => c.phone)
+          .filter(phone => phone !== null && phone !== '')
+      );
+      
+      let importedCount = 0;
+      let skippedCount = 0;
+      
+      // ✅ Map dữ liệu và kiểm tra trùng lặp
+      for (const apiContact of apiContacts) {
+        // ✅ Map dữ liệu: name → name, phone → phone, email → email
+        const name = apiContact.name || '';
+        const phone = apiContact.phone || null;
+        const email = apiContact.email || null;
+        
+        // ✅ Nếu phone trùng với một contact đã có → bỏ qua
+        if (phone && existingPhones.has(phone)) {
+          skippedCount++;
+          continue;
+        }
+        
+        // Đảm bảo database vẫn còn kết nối trước khi insert
+        await initDatabase();
+        
+        // Insert contact mới vào SQLite
+        await insertContact(name, phone, email);
+        importedCount++;
+        
+        // Thêm phone vào set để tránh trùng trong cùng một lần import
+        if (phone) {
+          existingPhones.add(phone);
+        }
+      }
+      
+      // Đảm bảo database vẫn còn kết nối trước khi refresh
+      await initDatabase();
+      
+      // Refresh danh sách sau khi import
+      await loadContacts();
+      
+      // Hiển thị thông báo kết quả
+      Alert.alert(
+        'Import thành công',
+        `Đã import ${importedCount} liên hệ.\n${skippedCount > 0 ? `Bỏ qua ${skippedCount} liên hệ trùng lặp.` : ''}`,
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Error importing contacts:', error);
+      // ✅ Error state
+      Alert.alert(
+        'Lỗi import',
+        'Không thể import liên hệ từ API. Vui lòng kiểm tra kết nối và thử lại.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setImporting(false);
+    }
+  }, [loadContacts]);
+
   // ✅ Xóa contact với xác nhận
   const handleDeleteContact = useCallback((contact: Contact) => {
     // ✅ Hiện Alert xác nhận trước khi xóa
@@ -440,6 +524,22 @@ export default function Page() {
         >
           <Text style={[styles.filterButtonText, showFavoriteOnly && styles.filterButtonTextActive]}>
             ⭐
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ✅ Nút "Import từ API" */}
+      <View style={styles.importContainer}>
+        <TouchableOpacity
+          style={[styles.importButton, importing && styles.importButtonDisabled]}
+          onPress={handleImportFromAPI}
+          disabled={importing}
+        >
+          {importing ? (
+            <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+          ) : null}
+          <Text style={styles.importButtonText}>
+            {importing ? 'Đang import...' : 'Import từ API'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -589,6 +689,30 @@ const styles = StyleSheet.create({
   },
   filterButtonTextActive: {
     color: '#fff',
+  },
+  importContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  importButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#10B981',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  importButtonDisabled: {
+    backgroundColor: '#9CA3AF',
+  },
+  importButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   addButton: {
     width: 40,
