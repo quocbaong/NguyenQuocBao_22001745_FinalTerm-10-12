@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Text, View, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Modal, TextInput, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getAllContacts, insertContact, updateContact, updateContactFavorite, deleteContact, initDatabase, Contact } from "../db";
+import { Contact } from "../db";
+import { useContacts } from "../hooks/useContacts";
 
 // Modal component để chỉnh sửa contact
 const EditContactModal = ({ 
@@ -46,16 +47,15 @@ const EditContactModal = ({
     return Object.keys(newErrors).length === 0;
   };
 
+  const { editContact } = useContacts();
+
   const handleSave = async () => {
     if (!validate() || !contact) {
       return;
     }
 
     try {
-      // Đảm bảo database đã được khởi tạo
-      await initDatabase();
-      // ✅ UPDATE vào SQLite
-      await updateContact(
+      await editContact(
         contact.id,
         name.trim(),
         phone.trim() || null,
@@ -171,6 +171,7 @@ const AddContactModal = ({
   onClose: () => void; 
   onSuccess: () => void;
 }) => {
+  const { addContact } = useContacts();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -199,9 +200,7 @@ const AddContactModal = ({
     }
 
     try {
-      // Đảm bảo database đã được khởi tạo
-      await initDatabase();
-      await insertContact(name.trim(), phone.trim() || null, email.trim() || null);
+      await addContact(name.trim(), phone.trim() || null, email.trim() || null);
       // Reset form
       setName('');
       setPhone('');
@@ -301,79 +300,25 @@ const AddContactModal = ({
 };
 
 export default function Page() {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loading, setLoading] = useState(true);
+  // ✅ Sử dụng custom hook useContacts
+  const {
+    contacts,
+    loading,
+    importing,
+    searchText,
+    setSearchText,
+    showFavoriteOnly,
+    setShowFavoriteOnly,
+    loadContacts,
+    toggleFavorite,
+    importFromAPI,
+    removeContact,
+  } = useContacts();
+
   const [modalVisible, setModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
-  // ✅ State cho tìm kiếm và filter
-  const [searchText, setSearchText] = useState('');
-  const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
-  // ✅ State cho import API
-  const [importing, setImporting] = useState(false);
   const { top } = useSafeAreaInsets();
-
-  useEffect(() => {
-    const initializeAndLoad = async () => {
-      try {
-        setLoading(true);
-        // Đảm bảo database đã được khởi tạo trước khi load contacts
-        await initDatabase();
-        await loadContacts();
-      } catch (error) {
-        console.error('Error initializing database:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    initializeAndLoad();
-  }, []);
-
-  const loadContacts = useCallback(async () => {
-    try {
-      const data = await getAllContacts();
-      setContacts(data);
-    } catch (error) {
-      console.error('Error loading contacts:', error);
-    }
-  }, []);
-
-  // ✅ Tối ưu bằng useMemo để filter contacts theo searchText và favorite
-  const filteredContacts = useMemo(() => {
-    let result = contacts;
-
-    // ✅ Filter chỉ hiển thị các contact favorite (nếu bật)
-    if (showFavoriteOnly) {
-      result = result.filter(contact => contact.favorite === 1);
-    }
-
-    // ✅ Tìm kiếm theo name hoặc phone
-    if (searchText.trim()) {
-      const searchLower = searchText.toLowerCase().trim();
-      result = result.filter(contact => {
-        const nameMatch = contact.name.toLowerCase().includes(searchLower);
-        const phoneMatch = contact.phone?.toLowerCase().includes(searchLower) || false;
-        return nameMatch || phoneMatch;
-      });
-    }
-
-    return result;
-  }, [contacts, searchText, showFavoriteOnly]);
-
-  // ✅ Tối ưu bằng useCallback
-  const handleToggleFavorite = useCallback(async (contact: Contact) => {
-    try {
-      // Đảm bảo database đã được khởi tạo
-      await initDatabase();
-      const newFavorite = contact.favorite === 1 ? 0 : 1;
-      await updateContactFavorite(contact.id, newFavorite);
-      await loadContacts();
-    } catch (error) {
-      console.error('Error toggling favorite:', error);
-      Alert.alert('Lỗi', 'Không thể cập nhật yêu thích. Vui lòng thử lại.');
-    }
-  }, [loadContacts]);
 
   // ✅ Mở modal sửa contact
   const handleEditContact = useCallback((contact: Contact) => {
@@ -381,119 +326,46 @@ export default function Page() {
     setEditModalVisible(true);
   }, []);
 
-  // ✅ Import contacts từ API
-  const handleImportFromAPI = useCallback(async () => {
-    try {
-      setImporting(true);
-      
-      // Đảm bảo database đã được khởi tạo trước khi làm bất cứ gì
-      await initDatabase();
-      
-      // ✅ Gọi GET tới endpoint danh sách contact mẫu
-      const response = await fetch('https://691845db21a96359486f8565.mockapi.io/contacts');
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const apiContacts = await response.json();
-      
-      // Đảm bảo database vẫn còn kết nối trước khi query
-      await initDatabase();
-      
-      // Lấy danh sách contacts hiện có để kiểm tra trùng lặp
-      const existingContacts = await getAllContacts();
-      const existingPhones = new Set(
-        existingContacts
-          .map(c => c.phone)
-          .filter(phone => phone !== null && phone !== '')
-      );
-      
-      let importedCount = 0;
-      let skippedCount = 0;
-      
-      // ✅ Map dữ liệu và kiểm tra trùng lặp
-      for (const apiContact of apiContacts) {
-        // ✅ Map dữ liệu: name → name, phone → phone, email → email
-        const name = apiContact.name || '';
-        const phone = apiContact.phone || null;
-        const email = apiContact.email || null;
-        
-        // ✅ Nếu phone trùng với một contact đã có → bỏ qua
-        if (phone && existingPhones.has(phone)) {
-          skippedCount++;
-          continue;
-        }
-        
-        // Đảm bảo database vẫn còn kết nối trước khi insert
-        await initDatabase();
-        
-        // Insert contact mới vào SQLite
-        await insertContact(name, phone, email);
-        importedCount++;
-        
-        // Thêm phone vào set để tránh trùng trong cùng một lần import
-        if (phone) {
-          existingPhones.add(phone);
-        }
-      }
-      
-      // Đảm bảo database vẫn còn kết nối trước khi refresh
-      await initDatabase();
-      
-      // Refresh danh sách sau khi import
-      await loadContacts();
-      
-      // Hiển thị thông báo kết quả
-      Alert.alert(
-        'Import thành công',
-        `Đã import ${importedCount} liên hệ.\n${skippedCount > 0 ? `Bỏ qua ${skippedCount} liên hệ trùng lặp.` : ''}`,
-        [{ text: 'OK' }]
-      );
-    } catch (error) {
-      console.error('Error importing contacts:', error);
-      // ✅ Error state
-      Alert.alert(
-        'Lỗi import',
-        'Không thể import liên hệ từ API. Vui lòng kiểm tra kết nối và thử lại.',
-        [{ text: 'OK' }]
-      );
-    } finally {
-      setImporting(false);
-    }
-  }, [loadContacts]);
-
   // ✅ Xóa contact với xác nhận
-  const handleDeleteContact = useCallback((contact: Contact) => {
-    // ✅ Hiện Alert xác nhận trước khi xóa
-    Alert.alert(
-      'Xác nhận xóa',
-      `Bạn có chắc chắn muốn xóa liên hệ "${contact.name}"?`,
-      [
-        {
-          text: 'Hủy',
-          style: 'cancel',
-        },
-        {
-          text: 'Xóa',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // Đảm bảo database đã được khởi tạo
-              await initDatabase();
-              // ✅ DELETE khỏi SQLite nếu người dùng đồng ý
-              await deleteContact(contact.id);
-              // Refresh danh sách sau khi xóa
-              await loadContacts();
-            } catch (error) {
-              console.error('Error deleting contact:', error);
-              Alert.alert('Lỗi', 'Không thể xóa liên hệ. Vui lòng thử lại.');
-            }
+  const handleDeleteContact = useCallback(
+    (contact: Contact) => {
+      Alert.alert(
+        'Xác nhận xóa',
+        `Bạn có chắc chắn muốn xóa liên hệ "${contact.name}"?`,
+        [
+          {
+            text: 'Hủy',
+            style: 'cancel',
           },
-        },
-      ]
-    );
-  }, [loadContacts]);
+          {
+            text: 'Xóa',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await removeContact(contact.id);
+              } catch (error) {
+                console.error('Error deleting contact:', error);
+                Alert.alert('Lỗi', 'Không thể xóa liên hệ. Vui lòng thử lại.');
+              }
+            },
+          },
+        ]
+      );
+    },
+    [removeContact]
+  );
+
+  // ✅ Toggle favorite với error handling
+  const handleToggleFavorite = useCallback(
+    async (contact: Contact) => {
+      try {
+        await toggleFavorite(contact);
+      } catch (error) {
+        Alert.alert('Lỗi', 'Không thể cập nhật yêu thích. Vui lòng thử lại.');
+      }
+    },
+    [toggleFavorite]
+  );
 
   return (
     <View style={[styles.container, { paddingTop: top }]}>
@@ -532,7 +404,7 @@ export default function Page() {
       <View style={styles.importContainer}>
         <TouchableOpacity
           style={[styles.importButton, importing && styles.importButtonDisabled]}
-          onPress={handleImportFromAPI}
+          onPress={importFromAPI}
           disabled={importing}
         >
           {importing ? (
@@ -551,18 +423,35 @@ export default function Page() {
         </View>
       ) : (
         <FlatList
-          data={filteredContacts}
+          data={contacts}
           keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.contactItem}
+              style={[
+                styles.contactItem,
+                // ✅ Highlight các contact favorite (màu khác)
+                item.favorite === 1 && styles.contactItemFavorite,
+              ]}
               onLongPress={() => handleEditContact(item)}
               activeOpacity={0.7}
             >
               <View style={styles.contactHeader}>
-                <Text style={styles.contactName}>{item.name}</Text>
+                <View style={styles.contactNameContainer}>
+                  {/* ✅ Icon favorite nếu favorite = 1 */}
+                  {item.favorite === 1 && (
+                    <Text style={styles.favoriteBadge}>⭐</Text>
+                  )}
+                  <Text
+                    style={[
+                      styles.contactName,
+                      item.favorite === 1 && styles.contactNameFavorite,
+                    ]}
+                  >
+                    {item.name}
+                  </Text>
+                </View>
                 {/* ✅ Icon sao để toggle favorite (0 ↔ 1) */}
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => handleToggleFavorite(item)}
                   style={styles.favoriteButton}
                 >
@@ -579,14 +468,14 @@ export default function Page() {
               )}
               {/* ✅ Nút "Sửa" và "Xóa" */}
               <View style={styles.actionButtons}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.editButton}
                   onPress={() => handleEditContact(item)}
                 >
                   <Text style={styles.editButtonText}>Sửa</Text>
                 </TouchableOpacity>
                 {/* ✅ Nút xóa để xóa contact */}
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.deleteButton}
                   onPress={() => handleDeleteContact(item)}
                 >
@@ -596,15 +485,21 @@ export default function Page() {
             </TouchableOpacity>
           )}
           ListEmptyComponent={
-            <View style={styles.centerContainer}>
-              <Text style={styles.emptyText}>
-                {searchText || showFavoriteOnly 
-                  ? 'Không tìm thấy liên hệ nào.' 
-                  : 'Chưa có liên hệ nào.'}
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyIcon}>📇</Text>
+              <Text style={styles.emptyTitle}>
+                {searchText || showFavoriteOnly
+                  ? 'Không tìm thấy liên hệ nào'
+                  : 'Chưa có liên hệ nào'}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {searchText || showFavoriteOnly
+                  ? 'Thử thay đổi từ khóa tìm kiếm hoặc tắt bộ lọc'
+                  : 'Nhấn nút "+" để thêm liên hệ mới'}
               </Text>
             </View>
           }
-          contentContainerStyle={filteredContacts.length === 0 ? styles.emptyList : styles.list}
+          contentContainerStyle={contacts.length === 0 ? styles.emptyList : styles.list}
         />
       )}
 
@@ -762,17 +657,36 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
+  // ✅ Highlight các contact favorite (màu khác)
+  contactItemFavorite: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FBBF24',
+    borderWidth: 2,
+  },
   contactHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
   },
+  contactNameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  favoriteBadge: {
+    fontSize: 16,
+    marginRight: 6,
+  },
   contactName: {
     fontSize: 18,
     fontWeight: '700',
     color: '#1F2937',
     flex: 1,
+  },
+  // ✅ Highlight tên contact favorite
+  contactNameFavorite: {
+    color: '#92400E',
   },
   favoriteButton: {
     padding: 4,
@@ -818,6 +732,31 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  // ✅ Empty state dễ nhìn, thân thiện
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 40,
+  },
+  emptyIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 24,
   },
   emptyText: {
     fontSize: 16,
