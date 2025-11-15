@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Text, View, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity, Modal, TextInput, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getAllContacts, insertContact, updateContact, updateContactFavorite, initDatabase, Contact } from "../db";
+import { getAllContacts, insertContact, updateContact, updateContactFavorite, deleteContact, initDatabase, Contact } from "../db";
 
 // Modal component để chỉnh sửa contact
 const EditContactModal = ({ 
@@ -348,6 +348,36 @@ export default function Page() {
     setEditModalVisible(true);
   };
 
+  // ✅ Xóa contact với xác nhận
+  const handleDeleteContact = (contact: Contact) => {
+    // ✅ Hiện Alert xác nhận trước khi xóa
+    Alert.alert(
+      'Xác nhận xóa',
+      `Bạn có chắc chắn muốn xóa liên hệ "${contact.name}"?`,
+      [
+        {
+          text: 'Hủy',
+          style: 'cancel',
+        },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // ✅ DELETE khỏi SQLite nếu người dùng đồng ý
+              await deleteContact(contact.id);
+              // Refresh danh sách sau khi xóa
+              await loadContacts();
+            } catch (error) {
+              console.error('Error deleting contact:', error);
+              Alert.alert('Lỗi', 'Không thể xóa liên hệ. Vui lòng thử lại.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={[styles.container, { paddingTop: top }]}>
       <View style={styles.header}>
@@ -394,13 +424,22 @@ export default function Page() {
               {item.email && (
                 <Text style={styles.contactEmail}>{item.email}</Text>
               )}
-              {/* ✅ Nút "Sửa" để mở Modal chỉnh sửa */}
-              <TouchableOpacity 
-                style={styles.editButton}
-                onPress={() => handleEditContact(item)}
-              >
-                <Text style={styles.editButtonText}>Sửa</Text>
-              </TouchableOpacity>
+              {/* ✅ Nút "Sửa" và "Xóa" */}
+              <View style={styles.actionButtons}>
+                <TouchableOpacity 
+                  style={styles.editButton}
+                  onPress={() => handleEditContact(item)}
+                >
+                  <Text style={styles.editButtonText}>Sửa</Text>
+                </TouchableOpacity>
+                {/* ✅ Nút xóa để xóa contact */}
+                <TouchableOpacity 
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteContact(item)}
+                >
+                  <Text style={styles.deleteButtonText}>Xóa</Text>
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
           )}
           ListEmptyComponent={
@@ -530,15 +569,30 @@ const styles = StyleSheet.create({
     color: '#374151',
     marginBottom: 8,
   },
-  editButton: {
-    alignSelf: 'flex-end',
+  actionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
     marginTop: 8,
+    gap: 8,
+  },
+  editButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: '#3B82F6',
     borderRadius: 6,
   },
   editButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deleteButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#EF4444',
+    borderRadius: 6,
+  },
+  deleteButtonText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',

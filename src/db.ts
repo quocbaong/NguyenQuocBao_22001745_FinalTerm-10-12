@@ -157,5 +157,24 @@ export const updateContact = async (
   }
 };
 
+// Xóa contact khỏi database
+export const deleteContact = async (id: number): Promise<void> => {
+  try {
+    const database = getDatabase();
+    const statement = await database.prepareAsync(
+      'DELETE FROM contacts WHERE id = ?'
+    );
+    
+    try {
+      await statement.executeAsync([id]);
+    } finally {
+      await statement.finalizeAsync();
+    }
+  } catch (error) {
+    console.error('Error deleting contact:', error);
+    throw error;
+  }
+};
+
 export default db;
 
